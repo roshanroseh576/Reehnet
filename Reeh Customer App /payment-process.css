@@ -1,0 +1,19 @@
+/* payment-process.css */
+.pay-body { padding: 16px 18px 40px; display: grid; gap: 14px; }
+.card h3 { font-size: 15px; margin-bottom: 8px; }
+.small { font-size: 13px; margin-bottom: 8px; }
+.rows { display: grid; gap: 8px; }
+.rows > div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.rows dt { color: var(--muted); }
+.rows dd { font-weight: 600; text-align: right; word-break: break-word; }
+.rows .copy { display: inline-flex; gap: 8px; align-items: center; justify-content: flex-end; }
+.ref { border-color: var(--primary); background: var(--primary-soft); }
+.ref-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ref-row b { font-size: 22px; letter-spacing: 1px; }
+.slip-drop {
+  width: 100%; min-height: 110px; border: 1.5px dashed #C9D0E3; border-radius: 14px; background: var(--bg);
+  display: grid; place-items: center; gap: 10px; padding: 12px; cursor: pointer; color: var(--soft);
+}
+.slip-drop img { max-height: 260px; width: auto; border-radius: 10px; }
+.pay-actions { display: grid; gap: 10px; }
+.notice { background: var(--green-soft); color: #0A8A50; border-radius: 14px; padding: 14px; font-weight: 600; font-size: 14px; }
