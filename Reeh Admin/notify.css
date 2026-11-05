@@ -1,0 +1,8 @@
+/* notify.css */
+.panel { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+.panel h2 { font-size: 15px; margin-bottom: 10px; }
+.result { background: var(--primary-soft); color: var(--ink); border-radius: 12px; padding: 10px 12px; font-size: 14px; display: none; word-break: break-word; }
+.result.show { display: block; }
+.result.err { background: var(--red-soft); color: var(--red); }
+.progress-line { color: var(--soft); font-size: 13px; text-align: center; min-height: 18px; }
+.h-row .rc-main span { white-space: normal; }

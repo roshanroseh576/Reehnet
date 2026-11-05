@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#121B2E">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Send notification</title>
+  <link rel="stylesheet" href="admin-common.css">
+  <link rel="stylesheet" href="notify.css">
+</head>
+<body>
+<div id="boot" class="boot"><div class="spinner"></div></div>
+
+<div id="page" class="page" hidden>
+  <header class="topbar">
+    <button class="icon-btn back" id="back" aria-label="Back">
+      <svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+    </button>
+    <h1 id="title">Send notification</h1>
+  </header>
+
+  <main id="content" class="content"></main>
+  <button class="fab" id="fab" aria-label="Add" hidden>+</button>
+</div>
+
+<script type="module" src="notify.js"></script>
+</body>
+</html>
