@@ -1,9 +1,0 @@
-/* profile-edit.css */
-.edit-body { padding: 22px 18px 40px; display: grid; gap: 24px; }
-.rows { display: grid; gap: 10px; }
-.erow { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 16px 16px; cursor: pointer; text-align: left; }
-.erow .k { color: var(--soft); font-weight: 600; font-size: 15px; }
-.erow .v { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.erow .v b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.erow .v svg { width: 16px; height: 16px; stroke: var(--muted); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
-.erow.locked { cursor: default; background: #F7F8FC; }
