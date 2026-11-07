@@ -1,0 +1,30 @@
+/* messenger.css (admin) */
+.m-card .rc-main span { white-space: normal; }
+.unread-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--primary); display: inline-block; }
+
+.chat-sheet { position: fixed; inset: 0; z-index: 90; background: var(--bg); display: flex; flex-direction: column; animation: up .2s ease; }
+.chat-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #fff; border-bottom: 1px solid var(--line); }
+.chat-who { flex: 1; min-width: 0; display: grid; line-height: 1.2; color: inherit; text-decoration: none; }
+.chat-who b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-who small { color: var(--primary); font-weight: 600; font-size: 12px; }
+.chat-actions { display: flex; gap: 8px; padding: 8px 14px; background: #fff; border-bottom: 1px solid var(--line); }
+.chat-actions .btn { flex: 1; }
+.chat-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; max-width: 720px; width: 100%; margin: 0 auto; }
+.cm { max-width: 82%; display: grid; gap: 2px; }
+.cm.admin { align-self: flex-end; justify-items: end; }
+.cm.customer, .cm.bot { align-self: flex-start; }
+.cm .bub { padding: 10px 13px; border-radius: 16px; white-space: pre-wrap; word-break: break-word; }
+.cm.admin .bub { background: var(--primary); color: #fff; border-bottom-right-radius: 5px; }
+.cm.customer .bub { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.cm.bot .bub { background: #EDF0F7; color: var(--soft); border-bottom-left-radius: 5px; }
+.cm small { font-size: 10px; color: var(--muted); }
+.cm .tag { font-size: 11px; font-weight: 600; color: var(--muted); }
+.typing .bub { display: inline-flex; gap: 5px; align-items: center; padding: 13px 15px; }
+.typing .bub i { width: 7px; height: 7px; border-radius: 50%; background: #9AA4BF; animation: blink 1.2s infinite ease-in-out; }
+.typing .bub i:nth-child(2) { animation-delay: .18s; }
+.typing .bub i:nth-child(3) { animation-delay: .36s; }
+@keyframes blink { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-5px); opacity: 1; } }
+.chat-composer { display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: #fff; border-top: 1px solid var(--line); }
+.chat-composer .input { flex: 1; border-radius: 22px; padding: 11px 16px; }
+.send { width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--primary); display: grid; place-items: center; cursor: pointer; flex: none; }
+.send svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
