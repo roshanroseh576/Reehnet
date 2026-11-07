@@ -3,63 +3,147 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#121B2E">
-  <meta name="robots" content="noindex, nofollow">
-  <title>Reeh Cloud Admin</title>
+  <meta name="theme-color" content="#5C6FFF">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Reeh Cloud</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="base.css">
   <link rel="stylesheet" href="index.css">
 </head>
 <body>
+<div class="app">
 
-<!-- 1. Splash: logo + app name from Firebase -->
-<section id="splash" class="screen splash">
-  <div id="splash-logo" class="logo-ph"></div>
-  <h1 id="splash-name" class="name-ph">&nbsp;</h1>
-  <div class="bar"><i></i></div>
-</section>
+  <!-- 1. Splash: logo + app name from Firebase -->
+  <section id="screen-splash" class="screen splash">
+    <div id="splash-logo"></div>
+    <h1 id="splash-name">&nbsp;</h1>
+    <div class="splash-bar"><i></i></div>
+  </section>
 
-<!-- 2. Permissions -->
-<section id="perms" class="screen pad dark" hidden>
-  <h2>Allow access</h2>
-  <p class="sub">These help the admin app work properly. You can change them later in your phone settings.</p>
-  <ul class="perm-list">
-    <li><span class="pi">📷</span><div><b>Camera</b><small>Take photos for banners and offers.</small></div></li>
-    <li><span class="pi">🖼️</span><div><b>Gallery and files</b><small>Choose images from your phone.</small></div></li>
-    <li><span class="pi">🔔</span><div><b>Message notifications</b><small>Know when a customer messages or pays.</small></div></li>
-  </ul>
-  <button class="btn btn-primary btn-block" id="perm-go">Allow and continue</button>
-</section>
+  <!-- 2. Permissions (first open only) -->
+  <section id="screen-perms" class="screen pad" hidden>
+    <h2 class="screen-title">Before we start</h2>
+    <p class="muted">Reeh Cloud needs a few permissions to work.</p>
+    <ul class="perm-list">
+      <li><b>Notifications</b><span>Optional. You can allow this later.</span></li>
+      <li><b>Camera, files and gallery</b><span>Optional. Used for your profile photo and payment slip.</span></li>
+    </ul>
+    <button class="btn btn-primary btn-block" id="perm-continue">Allow and continue</button>
+  </section>
 
-<!-- 3. Login -->
-<section id="login" class="screen login" hidden>
-  <form id="login-form" class="login-card" autocomplete="on">
-    <div id="login-logo" class="brand"></div>
-    <h1 id="login-name">Admin</h1>
-    <p class="muted">Sign in to manage orders, users and offers.</p>
-    <label class="field"><span>Email</span>
-      <input class="input" id="email" type="email" autocomplete="username" required></label>
-    <label class="field"><span>Password</span>
-      <input class="input" id="password" type="password" autocomplete="current-password" required></label>
-    <button class="btn btn-primary btn-block" type="submit">Sign in</button>
-  </form>
-</section>
+  <!-- 3. Login / Sign up / PIN -->
+  <section id="screen-auth" class="screen pad" hidden>
+    <div id="auth-brand" class="auth-brand"></div>
+    <div class="tabs" id="auth-tabs">
+      <button class="tab on" data-tab="login">Login</button>
+      <button class="tab" data-tab="signup">Sign up</button>
+    </div>
 
-<!-- 4. Home -->
-<div id="home" class="home" hidden>
-  <header class="topbar">
-    <span id="home-logo"></span>
-    <h1 id="home-name"></h1>
-    <button class="icon-btn" id="logout" aria-label="Sign out" title="Sign out">
-      <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
-    </button>
-  </header>
+    <form id="form-login" autocomplete="off">
+      <label class="field"><span>Phone number</span>
+        <input class="input" id="login-phone" type="tel" inputmode="numeric" placeholder="0771234567" maxlength="12" required></label>
+      <button class="btn btn-primary btn-block" type="submit">Continue</button>
+      <a class="forgot" id="forgot-login" href="#" target="_blank" rel="noopener" hidden>Forgot PIN?</a>
+    </form>
 
-  <main class="home-body">
-    <div class="grid" id="grid"></div>
-  </main>
+    <form id="form-signup" autocomplete="off" hidden>
+      <label class="field"><span>User name</span>
+        <input class="input" id="signup-name" type="text" placeholder="Your name" maxlength="40" required></label>
+      <label class="field"><span>Phone number</span>
+        <input class="input" id="signup-phone" type="tel" inputmode="numeric" placeholder="0771234567" maxlength="12" required></label>
+      <label class="field"><span>Create a 4-digit passcode</span>
+        <input class="input" id="signup-pass" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required></label>
+      <label class="field"><span>Confirm passcode</span>
+        <input class="input" id="signup-pass2" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required></label>
+      <label class="agree"><input type="checkbox" id="agree-privacy"><span>I agree to the <a id="link-privacy" href="#" target="_blank" rel="noopener">Policy and privacy</a></span></label>
+      <label class="agree"><input type="checkbox" id="agree-terms"><span>I agree to the <a id="link-terms" href="#" target="_blank" rel="noopener">Terms and conditions</a></span></label>
+      <button class="btn btn-primary btn-block" type="submit" id="signup-btn" disabled>Sign up</button>
+    </form>
 
-  <nav class="nav" id="nav"></nav>
+    <form id="form-pass" autocomplete="off" hidden>
+      <h2 class="screen-title">Enter your passcode</h2>
+      <p class="muted" id="pass-phone">-</p>
+      <input class="input pin-input" id="pass-code" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required>
+      <button class="btn btn-primary btn-block" type="submit">Login</button>
+      <a class="forgot" id="forgot" href="#" target="_blank" rel="noopener" hidden>Forgot PIN?</a>
+      <button class="btn btn-ghost btn-block" type="button" data-back>Change number</button>
+    </form>
+
+    <form id="form-newpass" autocomplete="off" hidden>
+      <h2 class="screen-title">Create your passcode</h2>
+      <p class="muted">Choose a 4-digit passcode. You will need it every time you log in.</p>
+      <label class="field"><span>Passcode</span>
+        <input class="input" id="newpass-1" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required></label>
+      <label class="field"><span>Confirm passcode</span>
+        <input class="input" id="newpass-2" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required></label>
+      <button class="btn btn-primary btn-block" type="submit">Save and login</button>
+      <button class="btn btn-ghost btn-block" type="button" data-back>Back</button>
+    </form>
+
+    <form id="form-pin" autocomplete="off" hidden>
+      <h2 class="screen-title">Enter your PIN</h2>
+      <p class="muted" id="pin-note">Enter the 4-digit PIN you received.</p>
+      <input class="input pin-input" id="pin-code" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required>
+      <button class="btn btn-primary btn-block" type="submit">Verify</button>
+      <button class="btn btn-ghost btn-block" type="button" data-back>Back to login</button>
+    </form>
+  </section>
+
+  <!-- 4. Home -->
+  <section id="screen-home" class="screen" hidden>
+    <header class="topbar">
+      <span id="home-logo"></span>
+      <h1 id="home-name">Reeh Cloud</h1>
+      <a class="icon-btn" id="bell" href="#" aria-label="Notifications">
+        <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 20a1.9 1.9 0 0 0 3.4 0"/></svg>
+        <span class="bell-badge" id="bell-badge" hidden>0</span>
+      </a>
+    </header>
+
+    <main class="home-body">
+      <div class="card profile">
+        <div class="avatar" id="avatar">R</div>
+        <div class="profile-text">
+          <b id="p-name">-</b>
+          <span class="muted" id="p-phone">-</span>
+        </div>
+      </div>
+
+      <div id="pkg-card"></div>
+
+      <section class="foryou" id="foryou">
+        <div class="fy-head"><h3 id="fy-title">For You</h3><div class="dots" id="dots"></div></div>
+        <div class="carousel" id="carousel"></div>
+      </section>
+
+      <h3 class="section-title">Quick links</h3>
+      <div id="quick" class="quick"></div>
+
+      <h3 class="section-title">Recent activity</h3>
+      <div id="activity"></div>
+
+    </main>
+
+    <nav class="bottom-nav" id="bottom-nav"></nav>
+  </section>
+
 </div>
-
 <script type="module" src="index.js"></script>
+<div id="boot-error" style="display:none;position:fixed;inset:0;z-index:999;background:#fff;padding:24px;font:14px/1.5 system-ui,sans-serif;color:#121B2E"></div>
+<script>
+(function(){
+  var box=document.getElementById("boot-error");
+  function fail(m){box.style.display="block";box.innerHTML="<h3>App could not start</h3><p>"+String(m).replace(/</g,"&lt;")+"</p><p>Check your internet / turn off VPN, then reload.</p>";}
+  window.addEventListener("error",function(e){fail(e.message+(e.filename?" ("+e.filename.split("/").pop()+":"+e.lineno+")":""));});
+  window.addEventListener("unhandledrejection",function(e){fail(e.reason&&e.reason.message||e.reason);});
+  setTimeout(function(){var sp=document.getElementById("screen-splash");if(sp&&!sp.hidden)fail("Still loading after 12 seconds. Firebase scripts may be blocked on this network.");},12000);
+})();
+</script>
 </body>
 </html>

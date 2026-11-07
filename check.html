@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reeh Cloud check</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;padding:16px;background:#fff;color:#121B2E}
+h3{margin-bottom:8px} h4{margin:16px 0 4px}
+.row{padding:6px 8px;border-radius:8px;margin:4px 0;word-break:break-word}
+.ok{background:#E6F8EF;color:#0a6a3c}.bad{background:#FDECEC;color:#b3191f}.warn{background:#FFF3E6;color:#a85a14}
+small{display:block;color:#5B6B8A;margin-top:2px}
+</style></head><body>
+<h3>Reeh Cloud - data check</h3>
+<small>Open this page on the same address as your app, then send a screenshot of the whole result.</small>
+<div id="out"></div>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getFirestore, collection, getDocs, doc, getDoc, limit, query } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+const app = initializeApp({ apiKey: "AIzaSyDjgYmpI5ULWsMeLMcFfgJQv0yycKzlxeY", authDomain: "reeh-cloud.firebaseapp.com", projectId: "reeh-cloud", appId: "1:612108884872:web:e366868cab113c4b1ab83d" });
+const db = getFirestore(app);
+const out = document.getElementById("out");
+const h = (t) => out.insertAdjacentHTML("beforeend", `<h4>${t}</h4>`);
+const row = (cls, t, sub = "") => out.insertAdjacentHTML("beforeend", `<div class="row ${cls}">${t.replace(/</g, "&lt;")}${sub ? `<small>${sub.replace(/</g, "&lt;")}</small>` : ""}</div>`);
+const limit10 = (p) => Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error("no answer in 10s (network / VPN?)")), 10000))]);
+
+h("1. Which files are on your host (new or old)");
+const marks = { "profile.js": "No links added yet", "profile.html": "bottom-nav", "firebase-init.js": "streamPages", "index.js": "slideHTML" };
+for (const [f, m] of Object.entries(marks)) {
+  try {
+    const r = await limit10(fetch(f + "?v=" + Date.now(), { cache: "no-store" }));
+    const t = await r.text();
+    if (!r.ok) row("bad", f + " -> HTTP " + r.status, "file not found on the host");
+    else if (t.includes(m)) row("ok", f + " -> NEW version");
+    else row("bad", f + " -> OLD version", "upload the latest " + f);
+    if (f === "profile.html") row(t.includes("more-list") || t.includes("extra-edit") ? "bad" : "ok", t.includes("more-list") || t.includes("extra-edit") ? "profile.html still has More / Extra details (old)" : "profile.html has no More / Extra details (new)");
+  } catch (e) { row("bad", f + " -> " + e.message); }
+}
+
+h("2. Logged-in customer");
+const phone = localStorage.getItem("reeh_phone");
+row(phone ? "ok" : "warn", "saved phone: " + (phone || "none (log in to the app first)"));
+if (phone) {
+  try {
+    const s = await limit10(getDoc(doc(db, "users", phone)));
+    row(s.exists() ? "ok" : "bad", s.exists() ? "users/" + phone + " found - name: " + (s.data().name || "-") + ", status: " + s.data().status : "users/" + phone + " NOT found", s.exists() ? "" : "the document ID must be exactly the phone number");
+  } catch (e) { row("bad", "users/" + phone + " -> " + (e.code || e.message)); }
+}
+
+h("3. Firebase collections");
+for (const c of ["profileLinks", "moreLinks", "quickLinks", "banners", "offers", "packages"]) {
+  try {
+    const s = await limit10(getDocs(query(collection(db, c), limit(20))));
+    if (!s.size) { row(c === "moreLinks" ? "warn" : "bad", c + " -> EMPTY (0 documents)", "collection missing, or the name is spelled differently"); continue; }
+    row("ok", c + " -> " + s.size + " document(s)");
+    s.docs.forEach((d) => {
+      const x = d.data();
+      const issues = [];
+      if (x.sortOrder === undefined) issues.push("no sortOrder");
+      else if (typeof x.sortOrder !== "number") issues.push("sortOrder is not a number");
+      if (x.active === false) issues.push("active = false (hidden)");
+      if (c !== "packages" && c !== "offers" && c !== "banners" && !x.title) issues.push("no title");
+      if (c.endsWith("Links") && !x.link) issues.push("no link");
+      row(issues.length ? "warn" : "ok", "  " + (x.title || x.name || d.id), issues.join(", ") || "looks fine");
+    });
+  } catch (e) { row("bad", c + " -> " + (e.code || e.message), e.code === "permission-denied" ? "Firestore Rules do not allow reading this collection" : ""); }
+}
+h("Done");
+</script></body></html>

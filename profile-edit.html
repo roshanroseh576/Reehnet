@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#5C6FFF">
+  <title>Edit profile</title>
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="profile.css">
+  <link rel="stylesheet" href="profile-edit.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <button class="icon-btn" id="back" aria-label="Back">
+      <svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+    </button>
+    <h1>Profile</h1>
+  </header>
+
+  <main class="edit-body">
+    <div class="av-wrap center">
+      <button class="avatar-lg" id="avatar" aria-label="Profile photo"><span>R</span></button>
+      <button class="edit-badge" id="edit-photo" aria-label="Edit photo">
+        <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+      </button>
+    </div>
+
+    <div class="rows">
+      <button class="erow" id="row-name">
+        <span class="k">User Name</span>
+        <span class="v"><b id="e-name">-</b>
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        </span>
+      </button>
+      <button class="erow locked" id="row-phone">
+        <span class="k">Phone Number</span>
+        <span class="v"><b id="e-phone">-</b>
+          <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        </span>
+      </button>
+    </div>
+
+    <button class="btn btn-danger btn-block" id="logout">Logout</button>
+  </main>
+</div>
+<script type="module" src="profile-edit.js"></script>
+</body>
+</html>

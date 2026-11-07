@@ -39,14 +39,21 @@ function edit(b) {
     values: b || { active: true, sortOrder: items.length + 1 },
     fields: [
       { key: "imageUrl", label: "Banner image", type: "image" },
+      { key: "badge", label: "Badge (small label on top)", placeholder: "V2RAY EXCLUSIVE" },
       { key: "title", label: "Title" },
       { key: "subtitle", label: "Sub paragraph", type: "textarea" },
       { key: "buttonText", label: "Button text" },
       { key: "link", label: "Button link", placeholder: "package.html" },
+      { key: "colorFrom", label: "Background colour 1 (no image)", placeholder: "#FF8A3D", hint: "Used when there is no image. Hex colour, e.g. #FF8A3D" },
+      { key: "colorTo", label: "Background colour 2 (no image)", placeholder: "#FF5A5F" },
       { key: "active", label: "Visible to customers", type: "bool" },
       { key: "sortOrder", label: "Sort order", type: "number", hint: "Smaller number shows first" }
     ],
-    validate: (v) => { if (!v.title) throw new Error("Enter a title"); return v; }
+    validate: (v) => {
+      if (!v.title) throw new Error("Enter a title");
+      for (const k of ["colorFrom", "colorTo"]) if (v[k] && !/^#[0-9a-f]{3,8}$/i.test(v[k])) throw new Error("Colour must look like #FF8A3D");
+      return v;
+    }
   });
 }
 load(true);

@@ -1,249 +1,504 @@
-// Reeh Cloud Admin - Home: splash -> permissions -> login -> home (menu + bottom nav from Firebase)
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, getDoc, getDocs, collection, query, where, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDjgYmpI5ULWsMeLMcFfgJQv0yycKzlxeY",
-  authDomain: "reeh-cloud.firebaseapp.com",
-  projectId: "reeh-cloud",
-  storageBucket: "reeh-cloud.firebasestorage.app",
-  messagingSenderId: "612108884872",
-  appId: "1:612108884872:web:e366868cab113c4b1ab83d",
-  measurementId: "G-XW3Q1B65V0"
-};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+// index.js - Home page: splash -> permissions -> login/sign up/PIN -> home
+import {
+  db, doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, onSnapshot, serverTimestamp, orderBy, limit,
+  streamPages, appendOneByOne, thumb, esc, toDate, money, sleep, normPhone, isValidPhone, providerOf,
+  getSession, setSession, clearSession, loadBranding, logoHTML,
+  toast, confirmBox, hashPass
+} from "./firebase-init.js";
+// push.js is optional: if it is missing or blocked, the app still starts (only background notifications / sound are skipped)
+const push = import("./push.js").catch((e) => { console.warn("push.js not loaded:", e.message); return null; });
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const sortBy = (a, b) => (a.sortOrder || 0) - (b.sortOrder || 0);
+const SCREENS = ["splash", "perms", "auth", "home"];
+const show = (name) => SCREENS.forEach((s) => ($("screen-" + s).hidden = s !== name));
 
-function toast(msg) {
-  let t = $("toast");
-  if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("show");
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+let brand = {};
+let pendingPhone = null; // phone waiting for its PIN
+let unsubs = [];
+let activityShown = false;
+let fyTimer = null;
+
+/* ============ BOOT ============ */
+
+async function boot() {
+  const started = Date.now();
+  brand = await loadBranding();
+  document.title = brand.appName;
+  $("splash-logo").innerHTML = logoHTML(brand);
+  $("splash-name").textContent = brand.appName;
+  await sleep(Math.max(0, 1200 - (Date.now() - started)));
+
+  // First open: ask permissions once (notification, camera). All are optional and can be given later.
+  if (!localStorage.getItem("reeh_perms_done")) {
+    show("perms");
+    await new Promise((resolve) => {
+      $("perm-continue").onclick = async () => {
+        $("perm-continue").disabled = true;
+        await askOptionalPermissions();
+        localStorage.setItem("reeh_perms_done", "1");
+        resolve();
+      };
+    });
+  }
+
+  const phone = getSession();
+
+  if (phone) {
+    const snap = await getDoc(doc(db, "users", phone));
+    if (snap.exists() && snap.data().status === "active") return startHome(phone);
+    clearSession();
+  }
+  startAuth();
 }
 
-// success / info box with a single OK button
-function okBox(title, message) {
-  return new Promise((resolve) => {
-    const w = document.createElement("div");
-    w.className = "modal-backdrop";
-    w.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
-      <div class="ok-ico"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-      <h3>${esc(title)}</h3><p>${esc(message)}</p>
-      <button class="btn btn-primary btn-block">OK</button></div>`;
-    w.querySelector("button").onclick = () => { w.remove(); resolve(); };
-    document.body.appendChild(w);
-    w.querySelector("button").focus();
-  });
-}
-
-/* ---------- branding: logo + app name from Firebase (settings/app) ---------- */
-let brand = { appName: "Reeh Cloud Admin", logoUrl: "" };
-async function loadBrand() {
-  try {
-    const s = await getDoc(doc(db, "settings", "app"));
-    if (s.exists()) brand = { ...brand, ...s.data() };
-  } catch (e) { console.error(e); }
-}
-const logoHTML = () => brand.logoUrl
-  ? `<img class="logo" src="${esc(brand.logoUrl)}" alt="">`
-  : `<span class="logo logo-fallback">${esc((brand.appName || "R").charAt(0))}</span>`;
-
-/* ---------- permissions (first open only) ---------- */
-async function askPermissions() {
-  try { if ("Notification" in window) await Notification.requestPermission(); } catch (e) { /* can be allowed later */ }
+async function askOptionalPermissions() {
+  try { if ("Notification" in window) await Notification.requestPermission(); } catch (e) { /* user can allow later */ }
   try {
     if (navigator.mediaDevices?.getUserMedia) {
       const s = await navigator.mediaDevices.getUserMedia({ video: true });
       s.getTracks().forEach((t) => t.stop());
     }
-  } catch (e) { /* can be allowed later */ }
-  // Gallery / files: browsers have no separate permission; the picker opens when you choose an image.
+  } catch (e) { /* user can allow later */ }
 }
 
-/* ---------- boot: splash (logo + name) -> permissions ---------- */
-async function boot() {
-  const t0 = Date.now();
-  await loadBrand();
-  document.title = brand.appName;
-  $("splash-logo").innerHTML = logoHTML();
-  $("splash-name").textContent = brand.appName;
-  await sleep(Math.max(0, 1300 - (Date.now() - t0)));
-
-  if (!localStorage.getItem("reeh_admin_perms")) {
-    $("splash").hidden = true;
-    $("perms").hidden = false;
-    await new Promise((resolve) => {
-      $("perm-go").onclick = async () => {
-        $("perm-go").disabled = true;
-        await askPermissions();
-        localStorage.setItem("reeh_admin_perms", "1");
-        resolve();
-      };
-    });
-    $("perms").hidden = true;
-  }
-  $("splash").hidden = true;
+/* ============ AUTH ============ */
+// Login = phone number -> passcode.  Sign up = name + phone + own 4-digit passcode -> admin PIN verification.
+const MAX_TRIES = 5, LOCK_MS = 5 * 60 * 1000;
+const lockKey = (p) => "reeh_fail_" + p;
+function lockLeft(phone) {
+  try { const s = JSON.parse(localStorage.getItem(lockKey(phone)) || "{}"); return Math.max(0, (s.until || 0) - Date.now()); }
+  catch { return 0; }
 }
-const bootDone = boot();
+function registerFail(phone) {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(lockKey(phone)) || "{}"); } catch { /* ignore */ }
+  s.n = (s.n || 0) + 1;
+  if (s.n >= MAX_TRIES) { s.until = Date.now() + LOCK_MS; s.n = 0; }
+  localStorage.setItem(lockKey(phone), JSON.stringify(s));
+}
+const clearFails = (phone) => localStorage.removeItem(lockKey(phone));
 
-/* ---------- login ---------- */
-let justLoggedIn = false;
-$("login-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const btn = e.submitter; const label = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-  try {
-    justLoggedIn = true;
-    await signInWithEmailAndPassword(auth, $("email").value.trim(), $("password").value);
-  } catch (err) {
-    justLoggedIn = false;
-    console.error(err);
-    toast(["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found"].includes(err.code) ? "Wrong email or password" : "Sign in failed: " + err.code);
-  } finally { btn.disabled = false; btn.innerHTML = label; }
+function setBusy(btn, on) {
+  if (on) { btn.dataset.label = btn.innerHTML; btn.innerHTML = '<span class="spinner"></span>'; btn.disabled = true; }
+  else { btn.innerHTML = btn.dataset.label || btn.innerHTML; btn.disabled = false; }
+}
+const isCode = (v) => /^\d{4}$/.test(v);
+
+function startAuth() {
+  show("auth");
+  $("auth-brand").innerHTML = `${logoHTML(brand)}<b>${esc(brand.appName)}</b>`;
+  // links come from Firebase (settings/app): forgotPinLink, privacyLink, termsLink
+  const forgot = brand.forgotPinLink || brand.forgotPasscodeLink;
+  ["forgot", "forgot-login"].forEach((id) => { if (forgot) { $(id).href = forgot; $(id).hidden = false; } });
+  [["link-privacy", brand.privacyLink], ["link-terms", brand.termsLink]].forEach(([id, url]) => { if (url) $(id).href = url; else $(id).removeAttribute("href"); });
+  const updateAgree = () => { $("signup-btn").disabled = !($("agree-privacy").checked && $("agree-terms").checked); };
+  $("agree-privacy").onchange = updateAgree;
+  $("agree-terms").onchange = updateAgree;
+
+  const FORMS = ["login", "signup", "pass", "newpass", "pin"];
+  let pendingPhone = null;
+  const showForm = (name) => {
+    FORMS.forEach((f) => ($("form-" + f).hidden = f !== name));
+    $("auth-tabs").hidden = !(name === "login" || name === "signup");
+    document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+    const first = $("form-" + name).querySelector("input");
+    if (first) first.focus();
+  };
+  document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showForm(b.dataset.tab)));
+  document.querySelectorAll("[data-back]").forEach((b) => (b.onclick = () => showForm("login")));
+
+  const loginSuccess = (phone) => { setSession(phone); clearFails(phone); startHome(phone); };
+
+  // ---- Login step 1: phone number ----
+  $("form-login").onsubmit = async (e) => {
+    e.preventDefault();
+    const phone = normPhone($("login-phone").value);
+    if (!isValidPhone(phone)) return toast("Enter a valid mobile number");
+    const btn = e.submitter; setBusy(btn, true);
+    try {
+      const snap = await getDoc(doc(db, "users", phone));
+      if (!snap.exists()) {
+        await confirmBox({ title: "No account found", message: "This number is not registered. Check the number or sign up.", okText: "OK" });
+        return;
+      }
+      const u = snap.data();
+      pendingPhone = phone;
+      if (u.status === "blocked") return confirmBox({ title: "Account blocked", message: "Please contact support.", okText: "OK" });
+      if (u.status !== "active") {
+        $("pin-note").textContent = "Your account is waiting for its PIN. Enter the PIN you received.";
+        $("pin-code").value = "";
+        return showForm("pin");
+      }
+      if (!u.passcodeHash) {          // older account, or admin reset the passcode
+        ["newpass-1", "newpass-2"].forEach((i) => ($(i).value = ""));
+        return showForm("newpass");
+      }
+      $("pass-phone").textContent = phone;
+      $("pass-code").value = "";
+      showForm("pass");
+    } catch (err) {
+      console.error(err);
+      toast("Could not connect. Try again.");
+    } finally { setBusy(btn, false); }
+  };
+
+  // ---- Login step 2: passcode ----
+  $("form-pass").onsubmit = async (e) => {
+    e.preventDefault();
+    const code = $("pass-code").value.trim();
+    if (!isCode(code)) return toast("Enter your 4-digit passcode");
+    const left = lockLeft(pendingPhone);
+    if (left > 0) {
+      return confirmBox({ title: "Too many attempts", message: `Please try again in ${Math.ceil(left / 60000)} minute(s), or use Forgot passcode.`, okText: "OK" });
+    }
+    const btn = e.submitter; setBusy(btn, true);
+    try {
+      const u = (await getDoc(doc(db, "users", pendingPhone))).data() || {};
+      if (u.status !== "active") return showForm("login");
+      if ((await hashPass(pendingPhone, code)) === u.passcodeHash) return loginSuccess(pendingPhone);
+      registerFail(pendingPhone);
+      $("pass-code").value = "";
+      await confirmBox({ title: "Wrong passcode", message: "The passcode is not correct. Try again.", okText: "OK" });
+    } catch (err) {
+      console.error(err);
+      toast("Could not login. Try again.");
+    } finally { setBusy(btn, false); }
+  };
+
+  // ---- Create passcode for an existing account (no passcode saved yet) ----
+  $("form-newpass").onsubmit = async (e) => {
+    e.preventDefault();
+    const p1 = $("newpass-1").value.trim(), p2 = $("newpass-2").value.trim();
+    if (!isCode(p1)) return toast("Passcode must be 4 digits");
+    if (p1 !== p2) return toast("Passcodes do not match");
+    const btn = e.submitter; setBusy(btn, true);
+    try {
+      await updateDoc(doc(db, "users", pendingPhone), { passcodeHash: await hashPass(pendingPhone, p1), passcodeSetAt: serverTimestamp() });
+      loginSuccess(pendingPhone);
+    } catch (err) {
+      console.error(err);
+      toast("Could not save. Try again.");
+    } finally { setBusy(btn, false); }
+  };
+
+  // ---- Sign up ----
+  $("form-signup").onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $("signup-name").value.trim();
+    const phone = normPhone($("signup-phone").value);
+    const p1 = $("signup-pass").value.trim(), p2 = $("signup-pass2").value.trim();
+    if (name.length < 2) return toast("Enter your name");
+    if (!isValidPhone(phone)) return toast("Enter a valid mobile number");
+    if (!isCode(p1)) return toast("Passcode must be 4 digits");
+    if (p1 !== p2) return toast("Passcodes do not match");
+    if (!($("agree-privacy").checked && $("agree-terms").checked)) return toast("Please tick Policy and privacy and Terms and conditions");
+    const btn = e.submitter; setBusy(btn, true);
+    try {
+      const ref = doc(db, "users", phone);
+      if ((await getDoc(ref)).exists()) {
+        const goLogin = await confirmBox({
+          title: "Already registered", message: "This number is already registered.",
+          okText: "Login now", cancelText: "Cancel"
+        });
+        if (goLogin) { showForm("login"); $("login-phone").value = phone; }
+        return;
+      }
+      await setDoc(ref, {
+        name, phone, provider: providerOf(phone) || "unknown",
+        status: "pending", pin: "", passcodeHash: await hashPass(phone, p1),
+        createdAt: serverTimestamp(), termsAcceptedAt: serverTimestamp()
+      });
+      const ok = await confirmBox({
+        title: "Verify your number",
+        message: "A PIN will be sent to the number you registered. Enter it to continue.",
+        okText: "OK", cancelText: "Cancel"
+      });
+      if (ok) { pendingPhone = phone; $("pin-note").textContent = "Enter the 4-digit PIN you received."; $("pin-code").value = ""; showForm("pin"); }
+      else showForm("login");
+    } catch (err) {
+      console.error(err);
+      toast("Could not sign up. Try again.");
+    } finally { setBusy(btn, false); updateAgree(); }
+  };
+
+  // ---- PIN verify (PIN is set by admin in Firebase: users/{phone}.pin) ----
+  $("form-pin").onsubmit = async (e) => {
+    e.preventDefault();
+    const code = $("pin-code").value.trim();
+    if (!isCode(code)) return toast("Enter the 4-digit PIN");
+    const btn = e.submitter; setBusy(btn, true);
+    try {
+      const ref = doc(db, "users", pendingPhone);
+      const u = (await getDoc(ref)).data() || {};
+      if (!u.pin) return confirmBox({ title: "PIN not issued yet", message: "Your PIN has not been issued yet. Please wait or contact support.", okText: "OK" });
+      if (String(u.pin) !== code) return confirmBox({ title: "Wrong PIN", message: "The PIN does not match. Check it and try again.", okText: "OK" });
+      await updateDoc(ref, { status: "active", activatedAt: serverTimestamp() });
+      if (!u.passcodeHash) { ["newpass-1", "newpass-2"].forEach((i) => ($(i).value = "")); return showForm("newpass"); }
+      loginSuccess(pendingPhone);
+    } catch (err) {
+      console.error(err);
+      toast("Could not verify. Try again.");
+    } finally { setBusy(btn, false); }
+  };
+
+  showForm("login");
+}
+
+/* ============ HOME ============ */
+const ICONS = {
+  home: '<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
+  package: '<svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>',
+  offers: '<svg viewBox="0 0 24 24"><path d="M20 12l-8 8-9-9V3h8l9 9z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg>',
+  profile: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>'
 };
-$("logout").onclick = () => signOut(auth);
+const DEFAULT_NAV = { home: "index.html", package: "package.html", offers: "offers.html", profile: "profile.html" };
 
-let unsubs = [];
-onAuthStateChanged(auth, async (user) => {
-  await bootDone;
-  unsubs.forEach((u) => u()); unsubs = [];
-  if (!user) {
-    $("home").hidden = true;
-    $("login-logo").innerHTML = logoHTML();
-    $("login-name").textContent = brand.appName;
-    $("login").hidden = false;
+async function startHome(phone) {
+  show("home");
+  unsubs.forEach((u) => u());
+  unsubs = [];
+
+  // header (logo, app name, notification link)
+  $("home-logo").innerHTML = logoHTML(brand);
+  $("home-name").textContent = brand.appName;
+  $("bell").href = brand.notificationLink || "notifications.html";
+
+  // unread count on the bell; a sound + message when a new notification arrives while the app is open
+  let firstN = true;
+  unsubs.push(onSnapshot(query(collection(db, "users", phone, "notifications"), where("read", "==", false), limit(100)), (s) => {
+    const b = $("bell-badge");
+    b.hidden = !s.size; b.textContent = s.size > 99 ? "99+" : s.size;
+    if (!firstN) s.docChanges().forEach((c) => {
+      if (c.type !== "added") return;
+      toast(c.doc.data().title || "New notification");
+      push.then((m) => m && m.playNotifySound(c.doc.data().soundUrl || brand.notificationSoundUrl));
+    });
+    firstN = false;
+  }, (e) => console.error("notifications", e)));
+  push.then((m) => m && m.registerPush(phone, brand));   // background (notification bar) notifications
+  $("p-phone").textContent = phone;
+
+  // links for the bottom nav come from Firebase: settings/nav
+  let nav = DEFAULT_NAV;
+  try {
+    const n = await getDoc(doc(db, "settings", "nav"));
+    if (n.exists()) nav = { ...DEFAULT_NAV, ...n.data() };
+  } catch (e) { console.error(e); }
+  $("bottom-nav").innerHTML = ["home", "package", "offers", "profile"].map((k) =>
+    `<a href="${esc(nav[k])}" class="${k === "home" ? "on" : ""}">${ICONS[k]}<span>${k[0].toUpperCase() + k.slice(1)}</span></a>`
+  ).join("");
+  const packageLink = nav.package;
+
+  // profile (live)
+  unsubs.push(onSnapshot(doc(db, "users", phone), (s) => {
+    const u = s.data();
+    if (!u || u.status === "blocked") { clearSession(); location.reload(); return; }
+    $("p-name").textContent = u.name || "-";
+    $("avatar").innerHTML = (u.photoUrl || u.photoBase64)
+      ? `<img src="${esc((u.photoUrl || u.photoBase64))}" alt="">`
+      : esc((u.name || "R").charAt(0).toUpperCase());
+  }));
+
+  // orders (live) - only what Home needs, three small queries instead of the whole history
+  $("pkg-card").innerHTML = '<div class="skel" style="height:230px;border-radius:26px"></div>';
+  $("activity").innerHTML = '<div class="skel"></div>';
+  activityShown = false;
+  const live = { active: [], unpaid: [], payment_pending: [] }, got = {};
+  const byNew = (x, y) => (toDate(y.createdAt)?.getTime() || 0) - (toDate(x.createdAt)?.getTime() || 0);
+  const refresh = () => {
+    if (got.active) renderPackage([...live.active].sort(byNew)[0], packageLink);
+    if (got.unpaid && got.payment_pending) renderActivity([...live.unpaid, ...live.payment_pending].sort(byNew));
+  };
+  for (const st of ["active", "unpaid", "payment_pending"]) {
+    unsubs.push(onSnapshot(query(collection(db, "orders"), where("phone", "==", phone), where("status", "==", st), limit(5)), (snap) => {
+      live[st] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      got[st] = true; refresh();
+    }, (e) => { console.error(e); got[st] = true; refresh(); }));
+  }
+
+  loadBanners();
+  loadQuickLinks();
+}
+
+const SVG = {
+  bolt: '<svg class="i" viewBox="0 0 24 24" style="stroke:#5C6FFF"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>',
+  server: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg>',
+  globe: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
+  cal: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  clock: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  ok: '<svg class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  bad: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  out: '<svg class="i" viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></svg>'
+};
+const gb = (n) => `${Number(Number(n || 0).toFixed(1))} GB`;
+
+function renderPackage(o, packageLink) {
+  const box = $("pkg-card");
+  if (!o) {
+    box.innerHTML = `<div class="pkg-empty"><b>No active package</b>
+      <span class="muted">Choose a V2RAY package to get connected.</span>
+      <a class="btn btn-primary" href="${esc(packageLink)}">View packages</a></div>`;
     return;
   }
+  const total = Number(o.dataTotalGB || 0);          // 0 = unlimited
+  const used = Number(o.dataUsedGB || 0);
+  const left = Math.max(0, total - used);
+  const pct = total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  const exp = toDate(o.expiryDate);
+  const days = exp ? Math.ceil((exp - Date.now()) / 86400000) : null;
+  const expired = days !== null && days <= 0;
+  const C = 2 * Math.PI * 42;                         // donut circumference (r = 42)
+  const link = o.configLink || "";
+  const isWeb = /^https?:\/\//i.test(link);
+
+  box.innerHTML = `
+    <div class="pkg">
+      <div class="pkg-top">
+        <div class="pkg-title"><b>${esc(o.packageName)}</b><span class="pkg-badge">${esc(o.packageType || "GB PACKAGE")}</span></div>
+        <span class="pkg-bolt">${SVG.bolt}</span>
+      </div>
+      <div class="pkg-meta">
+        ${o.serverName ? `<span>${SVG.server}${esc(o.serverName)}</span>` : ""}
+        <span>${SVG.globe}${esc(o.protocol || "V2RAY")}</span>
+      </div>
+
+      <div class="pkg-mid">
+        <div class="donut">
+          <svg viewBox="0 0 100 100">
+            <defs><linearGradient id="donutGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5C6FFF"/><stop offset="1" stop-color="#9B6BFF"/></linearGradient></defs>
+            <circle class="bg" cx="50" cy="50" r="42"/>
+            <circle class="fg" cx="50" cy="50" r="42" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"/>
+          </svg>
+          <div class="donut-text"><b>${total ? pct + "%" : "∞"}</b><small>USED</small></div>
+        </div>
+        <div class="pkg-right">
+          <div class="tiles">
+            <div class="tile"><small>TOTAL</small><b>${total ? gb(total) : "Unlimited"}</b></div>
+            <div class="tile used"><small>USED</small><b>${gb(used)}</b></div>
+            <div class="tile left"><small>LEFT</small><b>${total ? gb(left) : "-"}</b></div>
+          </div>
+          <div class="bar"><i style="width:${pct}%"></i></div>
+        </div>
+      </div>
+
+      <div class="pkg-info">
+        <div class="info"><span class="ico cal">${SVG.cal}</span><div><small>VALID</small><b>${esc(o.validityDays || "-")} Days</b></div></div>
+        <div class="info"><span class="ico ${expired ? "bad" : "clock"}">${SVG.clock}</span><div><small>DAYS LEFT</small><b class="${expired ? "bad" : ""}">${days === null ? "-" : expired ? "Expired" : days + " Days"}</b></div></div>
+        <div class="info"><span class="ico ${expired ? "bad" : "ok"}">${expired ? SVG.bad : SVG.ok}</span><div><small>EXPIRY</small><b>${exp ? exp.toLocaleDateString("en-CA") : "-"}</b></div></div>
+      </div>
+
+      <div class="pkg-actions">
+        ${link ? (isWeb
+          ? `<a class="btn btn-dark" href="${esc(link)}" target="_blank" rel="noopener">View V2RAY Config ${SVG.out}</a>`
+          : `<button class="btn btn-dark" id="copy-config">View V2RAY Config ${SVG.out}</button>`)
+          : `<span></span>`}
+        <a class="btn btn-light" href="${esc(packageLink)}">Renew</a>
+      </div>
+    </div>`;
+
+  // vless:// vmess:// trojan:// links cannot open as a page, so they are copied to the clipboard
+  const cp = $("copy-config");
+  if (cp) cp.onclick = async () => {
+    try { await navigator.clipboard.writeText(link); toast("Config copied"); }
+    catch { toast("Could not copy the config"); }
+  };
+}
+
+function renderActivity(list) {
+  const box = $("activity");
+  if (!list.length) { box.innerHTML = `<div class="card muted">No recent activity.</div>`; return; }
+  box.innerHTML = list.map((o) => {
+    const unpaid = o.status === "unpaid";
+    return `<div class="card act">
+      <div class="act-head"><b>${esc(o.packageName)}</b>
+        <span class="chip ${unpaid ? "chip-orange" : "chip-blue"}">${unpaid ? "Payment needed" : "Payment confirmation pending"}</span></div>
+      <div class="act-row"><span>${esc(o.dataLabel || "")}</span><b>${money(o.price)}</b></div>
+      ${unpaid ? `<div class="act-actions">
+          <a class="btn btn-primary" href="payment-process.html?order=${encodeURIComponent(o.id)}">Payment now</a>
+          <button class="btn btn-danger" data-cancel="${esc(o.id)}">Cancel order</button></div>` : ""}
+    </div>`;
+  }).join("");
+  if (!activityShown) {                // first draw: cards appear one by one
+    box.querySelectorAll(".act").forEach((el, i) => { el.classList.add("reveal"); el.style.animationDelay = i * 130 + "ms"; });
+    activityShown = true;
+  }
+  box.querySelectorAll("[data-cancel]").forEach((b) => (b.onclick = async () => {
+    const ok = await confirmBox({ title: "Cancel order?", message: "This order will be cancelled.", okText: "OK", cancelText: "Cancel" });
+    if (ok) await updateDoc(doc(db, "orders", b.dataset.cancel), { status: "cancelled", cancelledAt: serverTimestamp() });
+  }));
+}
+
+const BANNER_COLORS = [["#FF8A3D", "#FF5A5F"], ["#22B8CF", "#5C6FFF"], ["#8B5CF6", "#5C6FFF"], ["#0FC16E", "#22B8CF"]];
+const hex = (c) => (/^#[0-9a-f]{3,8}$/i.test(c || "") ? c : "");
+
+function slideHTML(b, i) {
+  const [a, c] = BANNER_COLORS[i % BANNER_COLORS.length];
+  return `<article class="slide ${b.imageUrl ? "has-img" : ""}" style="--a:${hex(b.colorFrom) || a};--b:${hex(b.colorTo) || c}">
+    ${b.imageUrl ? `<img class="slide-bg" src="${esc(thumb(b.imageUrl, 900))}" alt="">` : ""}<span class="slide-shade"></span>
+    <div class="slide-body">
+      ${b.badge ? `<span class="slide-badge">${esc(b.badge)}</span>` : ""}
+      <h4>${esc(b.title)}</h4>
+      ${b.subtitle ? `<p>${esc(b.subtitle)}</p>` : ""}
+      ${b.buttonText ? `<a class="slide-btn" href="${esc(b.link || "#")}">${esc(b.buttonText)}<svg viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></svg></a>` : ""}
+    </div></article>`;
+}
+
+// banners arrive 3 at a time, slide in one by one, and the carousel scrolls by itself
+async function loadBanners() {
+  const track = $("carousel"), dots = $("dots");
+  $("foryou").hidden = false;
+  $("fy-title").textContent = brand.bannerTitle || "For You";
+  track.innerHTML = '<div class="slide sk"></div>';
+  let idx = 0, n = 0, pauseUntil = 0, first = true;
+  const slides = () => [...track.querySelectorAll(".slide:not(.sk)")];
+  const drawDots = () => { dots.innerHTML = n > 1 ? Array.from({ length: n }, (_, i) => `<i class="${i === idx ? "on" : ""}"></i>`).join("") : ""; };
+  const goTo = (i) => {
+    const s = slides();
+    if (s.length < 2) return;
+    idx = (i + s.length) % s.length;
+    track.scrollTo({ left: s[idx].offsetLeft - s[0].offsetLeft, behavior: "smooth" });
+    drawDots();
+  };
+  track.onscroll = () => {
+    const s = slides();
+    if (s.length < 2) return;
+    const i = Math.min(s.length - 1, Math.max(0, Math.round(track.scrollLeft / (s[1].offsetLeft - s[0].offsetLeft))));
+    if (i !== idx) { idx = i; drawDots(); }
+  };
+  ["touchstart", "pointerdown", "wheel"].forEach((ev) => track.addEventListener(ev, () => { pauseUntil = Date.now() + 6000; }, { passive: true }));
+  clearInterval(fyTimer);
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    fyTimer = setInterval(() => { if (!document.hidden && Date.now() > pauseUntil) goTo(idx + 1); }, 4000);
+  }
   try {
-    const adm = await getDoc(doc(db, "admins", user.uid));       // only listed admins may enter
-    if (!adm.exists()) { justLoggedIn = false; await signOut(auth); return toast("This account is not an admin"); }
-  } catch (e) {
-    console.error(e); justLoggedIn = false; await signOut(auth);
-    return toast(e.code === "permission-denied" ? "Blocked by Firestore rules (publish the rules)" : "Could not verify admin access: " + (e.code || e.message));
-  }
-  $("login").hidden = true;
-  if (justLoggedIn) { justLoggedIn = false; await okBox("Login successful", "Welcome back."); }
-  startHome();
-  // alerts on this phone when a customer waits for an agent (works with the app closed; optional module)
-  import("./push.js").then((m) => m.registerAdminPush(user.uid, brand)).catch((e) => console.warn("push.js not loaded:", e.message));
-});
-
-/* ---------- home ---------- */
-// Menu icons: duotone line icons on a tinted tile (no emoji). In Firebase, `icon` is one of these names, or an image URL.
-const ICONS = {
-  orders: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" fill="currentColor" fill-opacity=".16"/><path d="M9 8h6M9 12h6"/>',
-  users: '<circle cx="9" cy="8" r="3.5" fill="currentColor" fill-opacity=".16"/><path d="M2.5 20c.8-3.8 3.2-5.5 6.5-5.5s5.7 1.7 6.5 5.5"/><path d="M16.5 4.8a3.4 3.4 0 0 1 0 6.4M18 14.8c2 .6 3.3 2.3 3.8 5.2"/>',
-  packages: '<path d="M21 8l-9-5-9 5 9 5 9-5z" fill="currentColor" fill-opacity=".16"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/>',
-  offers: '<path d="M20 12l-8 8-9-9V3h8l9 9z" fill="currentColor" fill-opacity=".16"/><circle cx="7.5" cy="7.5" r="1.3"/>',
-  banners: '<rect x="3" y="4" width="18" height="16" rx="3" fill="currentColor" fill-opacity=".16"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-9 9"/>',
-  messenger: '<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H10l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" fill="currentColor" fill-opacity=".16"/><path d="M8 10h8M8 13h5"/>',
-  settings: '<circle cx="12" cy="12" r="3" fill="currentColor" fill-opacity=".16"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/>',
-  bank: '<path d="M3 10l9-6 9 6z" fill="currentColor" fill-opacity=".16"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/>',
-  links: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
-  reports: '<rect x="4" y="12" width="3.5" height="8" rx="1" fill="currentColor" fill-opacity=".16"/><rect x="10.2" y="7" width="3.5" height="13" rx="1" fill="currentColor" fill-opacity=".16"/><rect x="16.5" y="4" width="3.5" height="16" rx="1" fill="currentColor" fill-opacity=".16"/>',
-  bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8z" fill="currentColor" fill-opacity=".16"/><path d="M10.3 20a1.9 1.9 0 0 0 3.4 0"/>',
-  grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="2" fill="currentColor" fill-opacity=".16"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2" fill="currentColor" fill-opacity=".16"/>'
-};
-const iconHTML = (icon) => /^(https?:|data:)/.test(icon || "")
-  ? `<img src="${esc(icon)}" alt="">`
-  : `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[icon] || ICONS.grid}</svg>`;
-
-const MENU_DEFAULT = [
-  { icon: "orders", title: "Orders", link: "manage.html#orders" },
-  { icon: "users", title: "Users", link: "users.html" },
-  { icon: "packages", title: "Packages", link: "packages.html" },
-  { icon: "offers", title: "Offers", link: "offers.html" },
-  { icon: "banners", title: "Banners", link: "banners.html" },
-  { icon: "messenger", title: "Messenger", link: "messenger.html" },
-  { icon: "bell", title: "Notifications", link: "notify.html" },
-  { icon: "settings", title: "Settings", link: "settings.html" }
-];
-const NAV_DEFAULT = { home: "index.html", messenger: "messenger.html", profile: "profile.html" };
-const NAV_ICONS = {
-  home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
-  messenger: '<path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H10l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 10h8M8 13h5"/>',
-  profile: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>'
-};
-
-async function startHome() {
-  $("home").hidden = false;
-  $("home-logo").innerHTML = logoHTML();
-  $("home-name").textContent = brand.appName;
-
-  // placeholders first, then data arrives one by one
-  $("grid").innerHTML = Array.from({ length: 4 }, () => '<div class="tile sk shimmer"></div>').join("");
-  $("nav").innerHTML = Array.from({ length: 3 }, () => '<div class="sk shimmer"></div>').join("");
-
-  const [menu, nav] = await Promise.all([loadMenu(), loadNav()]);
-  await showMenu(menu);
-  await showNav(nav);
-  watchBadges();
+    await streamPages(query(collection(db, "banners"), orderBy("sortOrder")), 3, async (page) => {
+      if (first) { track.innerHTML = ""; first = false; }
+      for (const b of page.filter((x) => x.active !== false)) {
+        track.insertAdjacentHTML("beforeend", slideHTML(b, n));
+        track.lastElementChild.classList.add("reveal");
+        n++; drawDots();
+        await sleep(160);
+      }
+    });
+  } catch (e) { console.error(e); }
+  if (!n) $("foryou").hidden = true;
 }
 
-async function loadMenu() {
+async function loadQuickLinks() {
+  const box = $("quick");
+  box.innerHTML = Array.from({ length: 4 }, () => '<div class="skel q-sk"></div>').join("");
+  let first = true;
   try {
-    const s = await getDocs(collection(db, "adminMenu"));
-    const items = s.docs.map((d) => d.data()).filter((m) => m.active !== false).sort(sortBy);
-    return items.length ? items : MENU_DEFAULT;
-  } catch (e) { console.error(e); return MENU_DEFAULT; }   // rules not updated yet: use the built-in menu
-}
-async function loadNav() {
-  try {
-    const s = await getDoc(doc(db, "settings", "adminNav"));
-    return s.exists() ? { ...NAV_DEFAULT, ...s.data() } : NAV_DEFAULT;
-  } catch (e) { console.error(e); return NAV_DEFAULT; }
-}
-
-async function showMenu(items) {
-  const grid = $("grid");
-  grid.innerHTML = "";
-  for (let i = 0; i < items.length; i++) {
-    const m = items[i];
-    const kind = /orders/.test(m.link || "") ? "orders" : /users/.test(m.link || "") ? "users" : /messenger/.test(m.link || "") ? "chats" : "";
-    grid.insertAdjacentHTML("beforeend",
-      `<a class="tile c${i % 6}" href="${esc(m.link || "#")}"><span class="ti">${iconHTML(m.icon)}</span><b>${esc(m.title)}</b>
-        ${kind ? `<span class="badge" data-b="${kind}" hidden>0</span>` : ""}</a>`);
-    await sleep(110);
-  }
+    await streamPages(query(collection(db, "quickLinks")), 12, async (page) => {
+      if (first) { box.innerHTML = ""; first = false; }
+      await appendOneByOne(box, page.filter((q) => q.active !== false).sort((x, y) => (x.sortOrder ?? 999) - (y.sortOrder ?? 999)), (q) => {
+        const ico = /^(https?:|data:)/.test(q.icon || "") ? `<img src="${esc(q.icon)}" alt="">` : esc(q.icon || "🔗");
+        return `<a href="${esc(q.link || "#")}"><span class="q-ico">${ico}</span>${esc(q.title)}</a>`;
+      });
+    });
+  } catch (e) { console.error(e); }
+  if (first) box.innerHTML = "";
 }
 
-async function showNav(links) {
-  const nav = $("nav");
-  nav.innerHTML = "";
-  for (const k of ["home", "messenger", "profile"]) {
-    nav.insertAdjacentHTML("beforeend",
-      `<a href="${esc(links[k])}" class="${k === "home" ? "on" : ""}"><svg viewBox="0 0 24 24">${NAV_ICONS[k]}</svg><span>${k[0].toUpperCase() + k.slice(1)}</span></a>`);
-    await sleep(110);
-  }
-}
-
-/* ---------- counts on tiles + alerts while the app is open ---------- */
-function notify(title, body) {
-  toast(title + (body ? ": " + body : ""));
-  try { navigator.vibrate?.(200); } catch (e) { /* ignore */ }
-  if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification(title, { body, icon: brand.logoUrl || undefined }); } catch (e) { /* not supported here */ }
-  }
-}
-function watchBadges() {
-  const defs = [
-    ["orders", query(collection(db, "orders"), where("status", "==", "payment_pending"), limit(50)), "New payment"],
-    ["users", query(collection(db, "users"), where("status", "==", "pending"), limit(50)), "New sign up"],
-    ["chats", query(collection(db, "chats"), where("status", "==", "waiting"), limit(50)), "Customer waiting for an agent"]
-  ];
-  for (const [kind, q, msg] of defs) {
-    let first = true;
-    unsubs.push(onSnapshot(q, (s) => {
-      document.querySelectorAll(`[data-b="${kind}"]`).forEach((b) => { b.hidden = !s.size; b.textContent = s.size; });
-      if (!first) s.docChanges().forEach((c) => c.type === "added" && notify(msg, c.doc.data().phone || c.doc.data().customerName || ""));
-      first = false;
-    }, (e) => console.error(kind, e.code)));
-  }
-}
+// start the page only after every function and constant above is defined
+boot();

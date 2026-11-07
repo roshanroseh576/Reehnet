@@ -1,14 +1,117 @@
-// messenger.js (admin) - customer chats: waiting / live / closed, reply, typing dots both ways, sounds from Firebase
+// messenger.js - assistant chat: Hi -> language choice (3 languages) -> live agent
 import {
-  db, $, esc, toDate, fmtDT, toast, askConfirm, skelRows, initPage,
-  doc, getDoc, getDocs, updateDoc, addDoc, collection, query, where, orderBy, limit, limitToLast, onSnapshot, serverTimestamp
-} from "./admin-common.js";
+  db, doc, getDoc, getDocs, setDoc, addDoc, collection, query, where, orderBy, limit, limitToLast, onSnapshot, serverTimestamp, writeBatch,
+  esc, toDate, getSession, toast, loadBranding, confirmBox, choiceBox
+} from "./firebase-init.js";
 
-await initPage("messenger", "Messenger");
+const $ = (id) => document.getElementById(id);
+const phone = getSession();
+if (!phone) location.replace("index.html");
 
-/* ---------------- sounds (links in Firebase: settings/app) ---------------- */
-let sounds = {};
-getDoc(doc(db, "settings", "app")).then((s) => (sounds = s.data() || {})).catch(() => {});
+$("back").onclick = () => (history.length > 1 ? history.back() : (location.href = "index.html"));
+
+const chatRef = doc(db, "chats", phone || "x");
+const msgsCol = collection(db, "chats", phone || "x", "messages");
+
+// Used when botConfig/main is missing in Firebase. Everything here can be changed in Firebase.
+const DEFAULTS = {
+  greetingWords: ["hi", "hii", "hello", "hey", "hai", "வணக்கம்", "ஹாய்", "ஹலோ", "හායි", "හෙලෝ", "ආයුබෝවන්"],
+  greeting: {
+    ta: "வணக்கம்! உங்களுக்கு உதவி தேவைப்படும் மொழியை தெரிவு செய்யவும்.",
+    en: "Hello! Please choose the language you need help in.",
+    si: "ආයුබෝවන්! ඔබට උදව් අවශ්‍ය භාෂාව තෝරන්න."
+  },
+  languages: [
+    { code: "ta", label: "தமிழ்" },
+    { code: "en", label: "English" },
+    { code: "si", label: "සිංහල" }
+  ],
+  connecting: {
+    ta: "வணக்கம், நான் உதவ தயாராக இருக்கிறேன். தற்போது நேரலை Agent உடன் இணைக்கிறேன்.",
+    en: "Hello, I'm ready to help. Connecting you to a live agent now.",
+    si: "ආයුබෝවන්, මම උදව් කිරීමට සූදානම්. දැන් ඔබව සජීවී නියෝජිතයෙකු සමඟ සම්බන්ධ කරමි."
+  },
+  fallback: {
+    ta: 'தொடங்க "Hi" என்று தட்டச்சு செய்யவும்.',
+    en: 'Type "Hi" to start.',
+    si: 'ආරම්භ කිරීමට "Hi" ටයිප් කරන්න.'
+  }
+};
+
+let cfg = DEFAULTS;
+let chat = {};
+let user = {};
+let busy = false;
+let lastMsgs = [];
+let brand = {}, firstChatSnap = true, firstMsgSnap = true;
+let typingOn = false, typingTimer = null, lastTypeMark = 0, lastTypedAt = 0;
+let selecting = false, allSelected = false;
+const selected = new Set();
+
+
+async function init() {
+  try {
+    const [c, u, br] = await Promise.all([getDoc(doc(db, "botConfig", "main")), getDoc(doc(db, "users", phone)), loadBranding()]);
+    if (c.exists()) cfg = { ...DEFAULTS, ...c.data() };
+    user = u.data() || {};
+    brand = br || {};
+  } catch (e) { console.error(e); }
+  drawMe();
+
+  // chat state: status banner + "agent is typing" (a new adminTypingAt value = typing again)
+  onSnapshot(chatRef, (s) => {
+    chat = s.data() || {};
+    const mark = toDate(chat.adminTypingAt)?.getTime() || 0;
+    if (mark && mark !== lastTypeMark) { lastTypeMark = mark; if (!firstChatSnap) showTyping(); }
+    firstChatSnap = false;
+    renderBanner(); renderMsgs();
+  });
+
+  onSnapshot(query(msgsCol, orderBy("createdAt", "asc"), limitToLast(200)), (s) => {
+    lastMsgs = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    if (!firstMsgSnap) {
+      s.docChanges().forEach((ch) => {
+        if (ch.type === "added" && ch.doc.data().sender !== "customer") { hideTyping(); playSound("receive"); }
+      });
+    }
+    firstMsgSnap = false;
+    [...selected].forEach((id) => { if (!lastMsgs.some((m) => m.id === id)) selected.delete(id); });
+    updateSelCount();
+    renderMsgs();
+  });
+
+  $("composer").onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $("text").value.trim();
+    if (!text || busy) return;
+    $("text").value = "";
+    playSound("send");
+    await handleInput(text);
+  };
+  // the agent sees "customer is typing" while a person is talking to them
+  $("text").addEventListener("input", () => {
+    if (!["waiting", "live"].includes(chat.status) || Date.now() - lastTypedAt < 2500) return;
+    lastTypedAt = Date.now();
+    setDoc(chatRef, { customerTypingAt: serverTimestamp() }, { merge: true }).catch(() => {});
+  });
+  setupSelection();
+}
+
+function drawMe() {
+  $("me-name").textContent = user.name || "My profile";
+  $("me-phone").textContent = phone;
+  $("me-av").innerHTML = (user.photoUrl || user.photoBase64) ? `<img src="${esc((user.photoUrl || user.photoBase64))}" alt="">` : esc((user.name || "R").charAt(0).toUpperCase());
+}
+
+/* ---------- typing indicator ---------- */
+function showTyping() {
+  typingOn = true; renderMsgs();
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(hideTyping, 5000);
+}
+function hideTyping() { clearTimeout(typingTimer); if (typingOn) { typingOn = false; renderMsgs(); } }
+
+/* ---------- sounds (files come from Firebase: settings/app) ---------- */
 function beep(kind) {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -22,138 +125,198 @@ function beep(kind) {
   } catch (e) { /* no audio */ }
 }
 function playSound(kind) {
-  const url = kind === "send" ? sounds.messageSendSoundUrl : sounds.messageReceiveSoundUrl;
+  const url = kind === "send" ? brand.messageSendSoundUrl : brand.messageReceiveSoundUrl;
   if (url) { try { new Audio(url).play().catch(() => beep(kind)); return; } catch (e) { /* fall back */ } }
   beep(kind);
 }
 
-/* ---------------- chat list (live) ---------------- */
-const FILTERS = [["waiting", "Waiting"], ["live", "Live"], ["closed", "Closed"]];
-const L_CHIP = { ta: "தமிழ்", en: "English", si: "සිංහල" };
-let filter = "waiting", lim = 10, unsub = null, chats = [], loaded = false;
-const revealed = new Set();
+/* ---------- writing ---------- */
+const addMsg = (sender, text, extra = {}) =>
+  addDoc(msgsCol, { sender, text, createdAt: serverTimestamp(), ...extra });
 
-$("content").innerHTML = '<div class="chips" id="chips"></div><div id="list" style="display:grid;gap:10px"></div><div id="more"></div>';
+const touchChat = (data) =>
+  setDoc(chatRef, { phone, customerName: user.name || "", updatedAt: serverTimestamp(), ...data }, { merge: true });
 
-function listen() {
-  unsub && unsub();
-  loaded = false; drawList();
-  unsub = onSnapshot(query(collection(db, "chats"), where("status", "==", filter), limit(lim)), (s) => {
-    chats = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (toDate(b.updatedAt) || 0) - (toDate(a.updatedAt) || 0));
-    loaded = true; drawList();
-  }, (e) => { console.error(e); $("list").innerHTML = `<div class="empty">Could not load chats (${esc(e.code || e.message)})</div>`; });
+const joinLangs = (obj) => ["ta", "en", "si"].map((k) => obj?.[k]).filter(Boolean).join("\n\n");
+
+/* ---------- bot logic ---------- */
+const isGreeting = (t) => {
+  const x = t.toLowerCase().replace(/[!.?\s]+/g, " ").trim();
+  return (cfg.greetingWords || []).some((w) => x === String(w).toLowerCase() || x.startsWith(String(w).toLowerCase() + " "));
+};
+const matchLang = (t) => {
+  const x = t.trim().toLowerCase();
+  return (cfg.languages || []).find((l) => l.code.toLowerCase() === x || l.label.toLowerCase() === x);
+};
+
+async function handleInput(text) {
+  busy = true;
+  try {
+    await addMsg("customer", text);
+    await touchChat({ lastMessage: text, lastSender: "customer", unreadAdmin: true });
+    const st = chat.status || "closed";
+    if (st === "waiting" || st === "live") return;           // a human takes over
+    if (st === "language") {
+      const l = matchLang(text);
+      if (l) return connect(l);
+      return sendLanguageChoice();                            // ask again
+    }
+    if (isGreeting(text)) return sendLanguageChoice();
+    await addMsg("bot", joinLangs(cfg.fallback));
+  } catch (e) { console.error(e); toast("Could not send. Try again."); }
+  finally { busy = false; }
 }
 
-function drawChips() {
-  $("chips").innerHTML = FILTERS.map(([v, l]) => `<button class="fchip ${v === filter ? "on" : ""}" data-f="${v}">${l}</button>`).join("");
-  $("chips").querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { filter = b.dataset.f; lim = 10; drawChips(); listen(); }));
+async function sendLanguageChoice() {
+  await addMsg("bot", joinLangs(cfg.greeting), { options: cfg.languages });
+  await touchChat({ status: "language" });
 }
 
-function drawList() {
-  const box = $("list");
-  if (!loaded) { box.innerHTML = skelRows(3); $("more").innerHTML = ""; return; }
-  if (!chats.length) { box.innerHTML = `<div class="empty">No ${filter} chats.</div>`; $("more").innerHTML = ""; return; }
-  box.innerHTML = chats.map((c) => `<div class="row-card m-card" data-open="${esc(c.id)}">
-      <div class="rc-main"><b>${esc(c.customerName || c.id)}</b><span>${esc(c.lastMessage || "")}</span><small>${esc(c.id)} • ${fmtDT(c.updatedAt)}</small></div>
-      <div class="rc-side">${c.unreadAdmin ? '<i class="unread-dot"></i>' : ""}${c.language ? `<span class="chip c-blue">${L_CHIP[c.language] || esc(c.language)}</span>` : ""}</div></div>`).join("");
-  const key = "list:" + filter;
-  if (!revealed.has(key)) {                         // first time: cards appear one by one
-    box.querySelectorAll(".row-card").forEach((el, i) => { el.classList.add("rise"); el.style.animationDelay = i * 110 + "ms"; });
-    revealed.add(key);
-  }
-  box.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openChat(chats.find((c) => c.id === b.dataset.open))));
-  $("more").innerHTML = chats.length >= lim ? '<button class="btn btn-ghost btn-block" id="more-btn">Load more</button>' : "";
-  const mb = $("more-btn"); if (mb) mb.onclick = () => { lim += 10; listen(); };
+async function pickLanguage(l) {          // tapped a language button
+  if (busy) return;
+  busy = true;
+  playSound("send");
+  try {
+    await addMsg("customer", l.label);
+    await touchChat({ lastMessage: l.label, lastSender: "customer", unreadAdmin: true });
+    await connect(l);
+  } catch (e) { console.error(e); toast("Could not send. Try again."); }
+  finally { busy = false; }
 }
 
-/* ---------------- one conversation ---------------- */
-function openChat(c0) {
-  if (!c0) return;
-  const phone = c0.id, ref = doc(db, "chats", phone), msgs = collection(db, "chats", phone, "messages");
-  const wrap = document.createElement("div");
-  wrap.className = "chat-sheet";
-  wrap.innerHTML = `
-    <div class="chat-top">
-      <button class="icon-btn" data-x aria-label="Back"><svg viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></button>
-      <a class="chat-who" id="who" href="users.html?phone=${encodeURIComponent(phone)}"><b>${esc(c0.customerName || phone)}</b><small>${esc(phone)}</small></a>
-      <span class="chip c-gray" id="st"></span>
-    </div>
-    <div class="chat-actions"><button class="btn btn-primary btn-sm" id="take">Take call</button><button class="btn btn-danger btn-sm" id="end">End chat</button></div>
-    <div class="chat-msgs" id="cm"><div class="skel-row"></div><div class="skel-row"></div></div>
-    <form class="chat-composer" id="form" autocomplete="off">
-      <input class="input" id="text" placeholder="Type a reply" maxlength="500" autocomplete="off">
-      <button class="send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
-    </form>`;
-  document.body.appendChild(wrap);
-  const q = (s) => wrap.querySelector(s);
-
-  let cur = c0, list = [], typingOn = false, typingTimer = null, lastMark = 0, lastTyped = 0, firstChat = true, firstMsgs = true;
-  const stopA = [];
-  const close = () => { stopA.forEach((f) => f()); clearTimeout(typingTimer); wrap.remove(); };
-  q("[data-x]").onclick = close;
-
-  // the name as saved on the customer's profile
-  getDoc(doc(db, "users", phone)).then((u) => { if (u.exists() && u.data().name) q("#who b").textContent = u.data().name; }).catch(() => {});
-
-  const draw = () => {
-    const box = q("#cm");
-    box.innerHTML = list.map((m) => {
-      const t = toDate(m.createdAt);
-      return `<div class="cm ${esc(m.sender)}">${m.sender === "bot" ? '<span class="tag">Assistant</span>' : ""}<div class="bub">${esc(m.text)}</div>
-        <small>${t ? t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</small></div>`;
-    }).join("") + (typingOn ? '<div class="cm customer typing"><div class="bub"><i></i><i></i><i></i></div></div>' : "");
-    box.scrollTop = box.scrollHeight;
-  };
-  const showTyping = () => { typingOn = true; draw(); clearTimeout(typingTimer); typingTimer = setTimeout(() => { typingOn = false; draw(); }, 5000); };
-
-  stopA.push(onSnapshot(ref, (s) => {
-    cur = { id: phone, ...s.data() };
-    const st = cur.status || "closed";
-    q("#st").textContent = { waiting: "Waiting", live: "Live", closed: "Closed", language: "Choosing language" }[st] || st;
-    q("#take").hidden = st !== "waiting";
-    q("#end").hidden = !(st === "waiting" || st === "live");
-    const mark = toDate(cur.customerTypingAt)?.getTime() || 0;      // a new value = the customer is typing
-    if (mark && mark !== lastMark) { lastMark = mark; if (!firstChat) showTyping(); }
-    firstChat = false;
-  }));
-  stopA.push(onSnapshot(query(msgs, orderBy("createdAt", "asc"), limitToLast(200)), (s) => {
-    list = s.docs.map((d) => ({ id: d.id, ...d.data() }));
-    if (!firstMsgs) s.docChanges().forEach((ch) => { if (ch.type === "added" && ch.doc.data().sender === "customer") { typingOn = false; playSound("receive"); } });
-    firstMsgs = false;
-    draw();
-  }));
-  updateDoc(ref, { unreadAdmin: false }).catch(() => {});
-
-  const takeCall = async () => {
-    await updateDoc(ref, { status: "live", adminCall: false, unreadAdmin: false, updatedAt: serverTimestamp() });
-    const r = await getDocs(query(collection(db, "adminCalls"), where("phone", "==", phone), where("status", "==", "ringing")));
-    await Promise.all(r.docs.map((d) => updateDoc(d.ref, { status: "answered", answeredAt: serverTimestamp() })));
-  };
-  q("#take").onclick = async (e) => { e.target.disabled = true; try { await takeCall(); } catch (err) { console.error(err); toast("Could not take the call"); } finally { e.target.disabled = false; } };
-  q("#end").onclick = async () => {
-    if (!(await askConfirm("End this chat?", "The customer can start again by typing Hi.", "End chat"))) return;
-    await updateDoc(ref, { status: "closed", endedAt: serverTimestamp(), adminCall: false }); toast("Chat ended");
-  };
-
-  // the customer sees "..." while you type
-  q("#text").addEventListener("input", () => {
-    if (Date.now() - lastTyped < 2500) return;
-    lastTyped = Date.now();
-    updateDoc(ref, { adminTypingAt: serverTimestamp() }).catch(() => {});
+async function connect(l) {
+  await addMsg("bot", cfg.connecting?.[l.code] || cfg.connecting?.en || "");
+  await touchChat({ status: "waiting", language: l.code, adminCall: true, callRequestedAt: serverTimestamp() });
+  // "call" for the admin: a ringing entry the admin side listens to
+  await addDoc(collection(db, "adminCalls"), {
+    phone, customerName: user.name || "", language: l.code, status: "ringing", createdAt: serverTimestamp()
   });
-  q("#form").onsubmit = async (e) => {
-    e.preventDefault();
-    const t = q("#text").value.trim();
-    if (!t) return;
-    q("#text").value = "";
-    playSound("send");
-    try {
-      await addDoc(msgs, { sender: "admin", text: t, createdAt: serverTimestamp() });
-      if ((cur.status || "") !== "live") await takeCall();
-      await updateDoc(ref, { lastMessage: t, lastSender: "admin", updatedAt: serverTimestamp(), unreadAdmin: false });
-    } catch (err) { console.error(err); toast("Could not send"); }
-  };
 }
 
-drawChips();
-listen();
+/* ---------- rendering ---------- */
+function renderBanner() {
+  const b = $("banner"), st = chat.status;
+  const map = {
+    waiting: ["Waiting for a live agent…", ""],
+    live: ["Live agent connected", "live"],
+    closed: ['Chat ended. Type "Hi" to start again.', "ended"]
+  };
+  const m = map[st];
+  b.hidden = !m;
+  if (m) {
+    b.className = "banner-state " + m[1];
+    b.innerHTML = esc(m[0]) + (st === "waiting" ? ' <button class="btn btn-sm" id="to-menu" type="button">Main menu</button>' : "");
+    const tm = $("to-menu"); if (tm) tm.onclick = restartFromMenu;
+  }
+  $("status-line").textContent = st === "live" ? "Live agent" : st === "waiting" ? "Connecting…" : "Assistant";
+}
+
+// while still waiting for an agent: go back to the beginning (language choice)
+async function restartFromMenu() {
+  const ok = await confirmBox({ title: "Main menu", message: "Go back to the start of the chat? Your request to the agent will be cancelled.", okText: "Main menu", cancelText: "Stay" });
+  if (!ok || busy) return;
+  busy = true;
+  try { await touchChat({ adminCall: false }); await sendLanguageChoice(); }
+  catch (e) { console.error(e); toast("Could not restart. Try again."); }
+  finally { busy = false; }
+}
+
+function renderMsgs() {
+  const box = $("msgs");
+  if (!lastMsgs.length) { box.innerHTML = `<div class="empty">Type <b>Hi</b> to start chatting.</div>`; return; }
+  const lastIdx = lastMsgs.length - 1;
+  box.classList.toggle("selecting", selecting);
+  box.innerHTML = lastMsgs.map((m, i) => {
+    const t = toDate(m.createdAt);
+    const time = t ? t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    const who = m.sender === "bot" ? "Assistant" : m.sender === "admin" ? "Agent" : "";
+    const opts = i === lastIdx && m.options && chat.status === "language"
+      ? `<div class="opts">${m.options.map((o, k) => `<button class="btn btn-ghost" data-lang="${k}">${esc(o.label)}</button>`).join("")}</div>` : "";
+    return `<div class="msg ${esc(m.sender)} ${selected.has(m.id) ? "picked" : ""}" data-id="${esc(m.id)}">
+      ${who ? `<span class="who">${who}</span>` : ""}
+      <div class="bubble">${esc(m.text)}</div>${opts}
+      <span class="time">${time}</span></div>`;
+  }).join("") + (typingOn ? '<div class="msg admin typing"><span class="who">Agent</span><div class="bubble"><i></i><i></i><i></i></div></div>' : "");
+  const opts = lastMsgs[lastIdx]?.options;
+  box.querySelectorAll("[data-lang]").forEach((b) => (b.onclick = () => pickLanguage(opts[Number(b.dataset.lang)])));
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ---------- press and hold your own message -> Select / Delete ---------- */
+const mine = (id) => lastMsgs.find((m) => m.id === id && m.sender === "customer");
+
+function setupSelection() {
+  const box = $("msgs");
+  let timer = null, fired = false, sx = 0, sy = 0;
+  box.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".msg.customer");
+    if (!el || selecting) return;
+    sx = e.clientX; sy = e.clientY; fired = false;
+    timer = setTimeout(() => { fired = true; openMenu(el.dataset.id); }, 550);
+  });
+  box.addEventListener("pointermove", (e) => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) { clearTimeout(timer); timer = null; } });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => box.addEventListener(ev, () => { clearTimeout(timer); timer = null; }));
+  box.addEventListener("contextmenu", (e) => { if (e.target.closest(".msg.customer")) e.preventDefault(); });
+  box.addEventListener("click", (e) => {
+    if (fired) { fired = false; return; }
+    if (!selecting || e.target.closest("[data-lang]")) return;
+    const el = e.target.closest(".msg.customer");
+    if (el) toggle(el.dataset.id);
+  });
+
+  $("sel-cancel").onclick = () => setSelecting(false);
+  $("sel-all").onclick = () => {
+    allSelected = true;
+    lastMsgs.filter((m) => m.sender === "customer").forEach((m) => selected.add(m.id));
+    updateSelCount(); renderMsgs();
+  };
+  $("sel-copy").onclick = async () => {
+    const text = [...selected].map((id) => mine(id)?.text).filter(Boolean).join("\n");
+    if (!text) return toast("Select a message first");
+    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { toast("Could not copy"); }
+  };
+  $("sel-del").onclick = () => removeMessages([...selected], allSelected);
+}
+
+async function openMenu(id) {
+  const act = await choiceBox({ title: "Message", options: [{ label: "Select", value: "select", kind: "primary" }, { label: "Delete", value: "delete", kind: "danger" }] });
+  if (act === "delete") return removeMessages([id], false);
+  if (act === "select") { setSelecting(true); toggle(id); }
+}
+function setSelecting(on) {
+  selecting = on; allSelected = false; selected.clear();
+  $("top-bar").hidden = on; $("sel-bar").hidden = !on;
+  updateSelCount(); renderMsgs();
+}
+function toggle(id) {
+  allSelected = false;
+  selected.has(id) ? selected.delete(id) : selected.add(id);
+  updateSelCount(); renderMsgs();
+}
+function updateSelCount() { $("sel-count").textContent = (allSelected ? "All" : selected.size) + " selected"; }
+
+async function removeMessages(ids, everything) {
+  if (!ids.length) return toast("Select a message first");
+  const text = everything ? "Delete ALL the messages you sent?" : ids.length === 1 ? "Delete this message?" : `Delete ${ids.length} messages?`;
+  if (!(await confirmBox({ title: "Delete", message: text + " This cannot be undone.", okText: "Delete", cancelText: "Cancel" }))) return;
+  try {
+    if (everything) {                      // also the ones that are not on screen
+      for (;;) {
+        const s = await getDocs(query(msgsCol, where("sender", "==", "customer"), limit(450)));
+        if (!s.docs.length) break;
+        const b = writeBatch(db); s.docs.forEach((d) => b.delete(d.ref)); await b.commit();
+      }
+    } else {
+      for (let i = 0; i < ids.length; i += 400) {
+        const b = writeBatch(db);
+        ids.slice(i, i + 400).forEach((id) => b.delete(doc(db, "chats", phone, "messages", id)));
+        await b.commit();
+      }
+    }
+    setSelecting(false);
+    toast("Deleted");
+  } catch (e) { console.error(e); toast("Could not delete (" + (e.code || e.message) + ")"); }
+}
+
+// start the page only after every function and constant above is defined
+init();

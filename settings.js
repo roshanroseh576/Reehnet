@@ -14,9 +14,7 @@ $("content").innerHTML = `
   <div id="nav-card">${skelRows(1)}</div>
   <div class="sec-head"><h2>Quick links</h2><button class="btn btn-primary btn-sm" id="add-quick">+ Add</button></div>
   <div id="quick" style="display:grid;gap:10px"></div><div id="quick-more"></div>
-  <div class="sec-head"><h2>Profile page: More (icon grid)</h2><button class="btn btn-primary btn-sm" id="add-grid">+ Add</button></div>
-  <div id="grid" style="display:grid;gap:10px"></div><div id="grid-more"></div>
-  <div class="sec-head"><h2>Profile page: list (Policy and privacy, About Us)</h2><button class="btn btn-primary btn-sm" id="add-more">+ Add</button></div>
+  <div class="sec-head"><h2>Profile page links (Policy, Terms, About us)</h2><button class="btn btn-primary btn-sm" id="add-more">+ Add</button></div>
   <div id="more" style="display:grid;gap:10px"></div><div id="more-more"></div>`;
 
 /* ---------- App header (settings/app) ---------- */
@@ -48,16 +46,12 @@ $("edit-app").onclick = () => openForm({
     { key: "bannerTitle", label: "Home banner section title", placeholder: "For You" },
     { key: "forgotPinLink", label: "Forgot PIN page link", placeholder: "https://wa.me/94771234567 or forgot-pin.html" },
     { key: "privacyLink", label: "Policy and privacy page link", placeholder: "policy-and-privacy.html" },
-    { key: "termsLink", label: "Terms and conditions page link", placeholder: "terms-and-conditions.html" },
-    { key: "notificationSoundUrl", label: "Notification sound (audio file link)", placeholder: "sounds/notify.mp3 or https://.../notify.mp3", hint: "Plays while the customer app is open." },
-    { key: "vapidKey", label: "Push key (Web Push certificate key)", hint: "Firebase Console > Project settings > Cloud Messaging > Web Push certificates" },
-    { key: "messageSendSoundUrl", label: "Chat: sound when a message is sent", placeholder: "sounds/send.mp3" },
-    { key: "messageReceiveSoundUrl", label: "Chat: sound when a message arrives", placeholder: "sounds/receive.mp3" }
+    { key: "termsLink", label: "Terms and conditions page link", placeholder: "terms-and-conditions.html" }
   ],
-  values: { logoUrl: appData.logoUrl || "", appName: appData.appName || "", bannerTitle: appData.bannerTitle || "", forgotPinLink: appData.forgotPinLink || appData.forgotPasscodeLink || "", privacyLink: appData.privacyLink || "", termsLink: appData.termsLink || "", notificationSoundUrl: appData.notificationSoundUrl || "", vapidKey: appData.vapidKey || "", messageSendSoundUrl: appData.messageSendSoundUrl || "", messageReceiveSoundUrl: appData.messageReceiveSoundUrl || "" },
+  values: { logoUrl: appData.logoUrl || "", appName: appData.appName || "", bannerTitle: appData.bannerTitle || "", forgotPinLink: appData.forgotPinLink || appData.forgotPasscodeLink || "", privacyLink: appData.privacyLink || "", termsLink: appData.termsLink || "" },
   buttons: [{ label: "Save", onClick: async (v) => {
     if (!v.appName) throw new Error("Enter the app name");
-    await setDoc(appRef, { appName: v.appName, logoUrl: v.logoUrl || deleteField(), bannerTitle: v.bannerTitle || deleteField(), forgotPinLink: v.forgotPinLink || deleteField(), privacyLink: v.privacyLink || deleteField(), termsLink: v.termsLink || deleteField(), notificationSoundUrl: v.notificationSoundUrl || deleteField(), vapidKey: v.vapidKey || deleteField(), messageSendSoundUrl: v.messageSendSoundUrl || deleteField(), messageReceiveSoundUrl: v.messageReceiveSoundUrl || deleteField() }, { merge: true });
+    await setDoc(appRef, { appName: v.appName, logoUrl: v.logoUrl || deleteField(), bannerTitle: v.bannerTitle || deleteField(), forgotPinLink: v.forgotPinLink || deleteField(), privacyLink: v.privacyLink || deleteField(), termsLink: v.termsLink || deleteField() }, { merge: true });
     toast("Saved"); loadApp();
   } }]
 });
@@ -117,5 +111,4 @@ function linkList({ col, boxId, moreId, addId, noun, emptyText }) {
 
 loadApp(); loadNav();
 linkList({ col: "quickLinks", boxId: "quick", moreId: "quick-more", addId: "add-quick", noun: "Quick link", emptyText: "No quick links yet. Tap + Add." });
-linkList({ col: "moreLinks", boxId: "grid", moreId: "grid-more", addId: "add-grid", noun: "More tile", emptyText: "No More tiles yet. Tap + Add." });
 linkList({ col: "profileLinks", boxId: "more", moreId: "more-more", addId: "add-more", noun: "Profile link", emptyText: "No profile links yet. Tap + Add (e.g. Policy and privacy)." });
